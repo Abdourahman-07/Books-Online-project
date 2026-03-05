@@ -1,9 +1,22 @@
-import requests
-from bs4 import BeautifulSoup
-import csv
-from urllib.parse import urljoin
+import os #Pour créer des dossiers et fichiers
+import csv #Pour interagir avec les fichiers csv
+import time #Pour ajouter des délais de code
+from urllib.parse import urljoin #Pour combiner des URL
+import requests #Pour envoyer des requêtes
+from bs4 import BeautifulSoup #Pour interagir avec le Html et Css
 
-category_url = "https://books.toscrape.com/catalogue/category/books/historical-fiction_4/index.html"
+base_url = "https://books.toscrape.com/"
+
+def get_category_links():
+    response = requests.get(base_url)
+    category_links = {}
+    soup = BeautifulSoup(response.text, "html.parser")
+    for a in soup.select("ul.nav-list ul li a"):
+        category_name = a.get_text(strip=True)
+        relative_href = a["href"]
+        category_url = urljoin(base_url, relative_href)
+        category_links[category_name] = category_url
+    return category_links
 
 def get_book_links_from_category_page(url):
     response = requests.get(url)
@@ -15,18 +28,17 @@ def get_book_links_from_category_page(url):
         links.append(full_url)
     return links, soup
 
-
-def get_book_links():
+def get_book_links_for_category(category_url):
     all_links = []
-    url = category_url
     while True:
-        links, soup = get_book_links_from_category_page(url)
+        links, soup = get_book_links_from_category_page(category_url)
         all_links.extend(links)
         next_link = soup.select_one("li.next a")
         if not next_link:
             break
         next_href = next_link["href"]
-        url = urljoin(url, next_href)
+        category_url = urljoin(category_url, next_href)
+        time.sleep(0.5)
     return all_links
 
 def get_data_product(book_url):
@@ -34,17 +46,18 @@ def get_data_product(book_url):
     soup = BeautifulSoup(page_product.text, 'html.parser')
 
     product_page_url = book_url
-    universal_product_code = soup.select_one("table.table.table-striped tr:nth-of-type(1) td").string
-    title = soup.select_one("div.col-sm-6.product_main h1").string
-    price_including_tax = soup.select_one("table.table.table-striped tr:nth-of-type(4) td").string
-    price_excluding_tax = soup.select_one("table.table.table-striped tr:nth-of-type(3) td").string
+    universal_product_code = soup.select_one("table.table.table-striped tr:nth-of-type(1) td").get_text(strip=True)
+    title = soup.select_one("div.col-sm-6.product_main h1").get_text(strip=True)
+    price_including_tax = soup.select_one("table.table.table-striped tr:nth-of-type(4) td").get_text(strip=True)
+    price_excluding_tax = soup.select_one("table.table.table-striped tr:nth-of-type(3) td").get_text(strip=True)
     p = soup.select_one("p.instock.availability")
     number_available = p.get_text(strip=True)
-    product_description = soup.select_one("div.sub-header + p").string
+    description_tag = soup.select_one("div.sub-header + p")
+    product_description = description_tag.get_text(strip=True) if description_tag else ""
     category = soup.select_one("ul.breadcrumb li:nth-of-type(3)").get_text(strip=True)
     rating_map = {"One": 1, "Two": 2, "Three": 3, "Four": 4, "Five": 5}
     rating_word = soup.select_one("p.star-rating")["class"][1]
-    review_rating = rating_map[rating_word]
+    review_rating = rating_map.get(rating_word, 0)
     img_src = soup.select_one("div.item.active img")["src"]
     image_url = urljoin(product_page_url, img_src)
 
@@ -62,7 +75,10 @@ def get_data_product(book_url):
     }
     return data
 
-def update_csv_books(filename):
+def save_category_to_csv(category_name, book_links, output_dir="csv_books"):
+    os.makedirs(output_dir, exist_ok=True)
+    safe_category = category_name.lower().replace(" ", "_").replace("/", "_")
+    filename = os.path.join(output_dir, f"{safe_category}.csv")
     fieldnames = [
         "product_page_url",
         "universal_product_code",
@@ -75,14 +91,18 @@ def update_csv_books(filename):
         "review_rating",
         "image_url",
     ]
-
-    book_links = get_book_links()
-
     with open(filename, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for url in book_links:
             data = get_data_product(url)
             writer.writerow(data)
+    print(f"Catégorie '{category_name}' sauvegardée")
 
-update_csv_books("historical_fiction_books.csv")
+def main():
+    categories = get_category_links()
+    for category_name, category_url in categories.items():
+        book_links = get_book_links_for_category(category_url)
+        save_category_to_csv(category_name, book_links)
+
+main()
