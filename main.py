@@ -1,9 +1,9 @@
-import os #Pour créer des dossiers et fichiers
-import csv #Pour interagir avec les fichiers csv
-import time #Pour ajouter des délais de code
-from urllib.parse import urljoin #Pour combiner des URL
-import requests #Pour envoyer des requêtes
-from bs4 import BeautifulSoup #Pour interagir avec le Html et Css
+import os  # Pour créer des dossiers et fichiers
+import csv  # Pour interagir avec les fichiers csv
+import time  # Pour ajouter des délais de code
+from urllib.parse import urljoin  # Pour combiner des URL
+import requests  # Pour envoyer des requêtes
+from bs4 import BeautifulSoup  # Pour interagir avec le HTML
 
 base_url = "https://books.toscrape.com/"
 
@@ -38,12 +38,34 @@ def get_book_links_for_category(category_url):
             break
         next_href = next_link["href"]
         category_url = urljoin(category_url, next_href)
-        time.sleep(0.5)
     return all_links
+
+
+def sanitize_filename(text):
+    invalid_chars = r'\/:*?"<>|'
+    for char in invalid_chars:
+        text = text.replace(char, "_")
+    return text.strip().replace(" ", "_")
+
+
+def download_image(image_url, category, upc, title, images_root="images"):
+    safe_category = category.lower().replace(" ", "_").replace("/", "_")
+    category_dir = os.path.join(images_root, safe_category)
+    os.makedirs(category_dir, exist_ok=True)
+    ext = os.path.splitext(image_url)[1]
+    if not ext:
+        ext = ".jpg"
+    safe_title = sanitize_filename(title)
+    filename = f"{upc}_{safe_title}{ext}"
+    filepath = os.path.join(category_dir, filename)
+    response = requests.get(image_url, stream=True)
+    with open(filepath, "wb") as f:
+        f.write(response.content)
+    return filepath
 
 def get_data_product(book_url):
     page_product = requests.get(book_url)
-    soup = BeautifulSoup(page_product.text, 'html.parser')
+    soup = BeautifulSoup(page_product.text, "html.parser")
 
     product_page_url = book_url
     universal_product_code = soup.select_one("table.table.table-striped tr:nth-of-type(1) td").get_text(strip=True)
@@ -53,7 +75,7 @@ def get_data_product(book_url):
     p = soup.select_one("p.instock.availability")
     number_available = p.get_text(strip=True)
     description_tag = soup.select_one("div.sub-header + p")
-    product_description = description_tag.get_text(strip=True) if description_tag else ""
+    product_description = (description_tag.get_text(strip=True))
     category = soup.select_one("ul.breadcrumb li:nth-of-type(3)").get_text(strip=True)
     rating_map = {"One": 1, "Two": 2, "Three": 3, "Four": 4, "Five": 5}
     rating_word = soup.select_one("p.star-rating")["class"][1]
@@ -61,6 +83,12 @@ def get_data_product(book_url):
     img_src = soup.select_one("div.item.active img")["src"]
     image_url = urljoin(product_page_url, img_src)
 
+    local_image_path = download_image(
+        image_url=image_url,
+        category=category,
+        upc=universal_product_code,
+        title=title,
+    )
     data = {
         "product_page_url": product_page_url,
         "universal_product_code": universal_product_code,
@@ -72,6 +100,7 @@ def get_data_product(book_url):
         "category": category,
         "review_rating": review_rating,
         "image_url": image_url,
+        "image_path": local_image_path
     }
     return data
 
@@ -90,6 +119,7 @@ def save_category_to_csv(category_name, book_links, output_dir="csv_books"):
         "category",
         "review_rating",
         "image_url",
+        "image_path"
     ]
     with open(filename, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -104,5 +134,6 @@ def main():
     for category_name, category_url in categories.items():
         book_links = get_book_links_for_category(category_url)
         save_category_to_csv(category_name, book_links)
+        time.sleep(0.5)
 
 main()
