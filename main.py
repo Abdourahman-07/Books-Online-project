@@ -7,8 +7,19 @@ from bs4 import BeautifulSoup  # Pour interagir avec le HTML
 
 base_url = "https://books.toscrape.com/"
 
+def safe_get(url, **kwargs):
+    try:
+        response = requests.get(url)
+        return response
+    except requests.RequestException as e:
+        print(f"Erreur réseau sur {url}")
+        return None
+
 def get_category_links():
-    response = requests.get(base_url)
+    response = safe_get(base_url)
+    if response is None:
+        print("Impossible de récupérer la page d'accueil, arrêt.")
+        return {}
     category_links = {}
     soup = BeautifulSoup(response.text, "html.parser")
     for a in soup.select("ul.nav-list ul li a"):
@@ -19,7 +30,10 @@ def get_category_links():
     return category_links
 
 def get_book_links_from_category_page(url):
-    response = requests.get(url)
+    response = safe_get(url)
+    if response is None:
+        print(f"Impossible de récupérer la page de catégorie : {url}")
+        return [], None
     soup = BeautifulSoup(response.text, "html.parser")
     links = []
     for article in soup.select("article.product_pod h3 a"):
@@ -32,6 +46,8 @@ def get_book_links_for_category(category_url):
     all_links = []
     while True:
         links, soup = get_book_links_from_category_page(category_url)
+        if soup is None:
+            break
         all_links.extend(links)
         next_link = soup.select_one("li.next a")
         if not next_link:
@@ -39,7 +55,6 @@ def get_book_links_for_category(category_url):
         next_href = next_link["href"]
         category_url = urljoin(category_url, next_href)
     return all_links
-
 
 def sanitize_filename(text):
     invalid_chars = r'\/:*?"<>|'
@@ -58,37 +73,56 @@ def download_image(image_url, category, upc, title, images_root="images"):
     safe_title = sanitize_filename(title)
     filename = f"{upc}_{safe_title}{ext}"
     filepath = os.path.join(category_dir, filename)
-    response = requests.get(image_url, stream=True)
+    response = safe_get(image_url, stream=True)
+    if response is None:
+        print(f"Impossible de télécharger l'image : {image_url}")
+        return ""
     with open(filepath, "wb") as f:
         f.write(response.content)
     return filepath
 
 def get_data_product(book_url):
-    page_product = requests.get(book_url)
+    page_product = safe_get(book_url)
+    if page_product is None:
+        return {
+            "product_page_url": book_url,
+            "universal_product_code": "",
+            "title": "",
+            "price_including_tax": "",
+            "price_excluding_tax": "",
+            "number_available": "",
+            "product_description": "",
+            "category": "",
+            "review_rating": "",
+            "image_url": "",
+            "image_path": "",
+            "error": "connection_failed",
+        }
     soup = BeautifulSoup(page_product.text, "html.parser")
-
     product_page_url = book_url
-    universal_product_code = soup.select_one("table.table.table-striped tr:nth-of-type(1) td").get_text(strip=True)
+    universal_product_code = soup.select_one(
+        "table.table.table-striped tr:nth-of-type(1) td"
+    ).get_text(strip=True)
     title = soup.select_one("div.col-sm-6.product_main h1").get_text(strip=True)
-    price_including_tax = soup.select_one("table.table.table-striped tr:nth-of-type(4) td").get_text(strip=True)
-    price_excluding_tax = soup.select_one("table.table.table-striped tr:nth-of-type(3) td").get_text(strip=True)
+    price_including_tax = soup.select_one(
+        "table.table.table-striped tr:nth-of-type(4) td"
+    ).get_text(strip=True)
+    price_excluding_tax = soup.select_one(
+        "table.table.table-striped tr:nth-of-type(3) td"
+    ).get_text(strip=True)
     p = soup.select_one("p.instock.availability")
     number_available = p.get_text(strip=True)
     description_tag = soup.select_one("div.sub-header + p")
-    product_description = (description_tag.get_text(strip=True))
+    product_description = (
+        description_tag.get_text(strip=True) if description_tag else ""
+    )
     category = soup.select_one("ul.breadcrumb li:nth-of-type(3)").get_text(strip=True)
     rating_map = {"One": 1, "Two": 2, "Three": 3, "Four": 4, "Five": 5}
     rating_word = soup.select_one("p.star-rating")["class"][1]
     review_rating = rating_map.get(rating_word, 0)
     img_src = soup.select_one("div.item.active img")["src"]
     image_url = urljoin(product_page_url, img_src)
-
-    local_image_path = download_image(
-        image_url=image_url,
-        category=category,
-        upc=universal_product_code,
-        title=title,
-    )
+    local_image_path = download_image(image_url, category, universal_product_code, title)
     data = {
         "product_page_url": product_page_url,
         "universal_product_code": universal_product_code,
@@ -100,7 +134,8 @@ def get_data_product(book_url):
         "category": category,
         "review_rating": review_rating,
         "image_url": image_url,
-        "image_path": local_image_path
+        "image_path": local_image_path,
+        "error": "",
     }
     return data
 
@@ -119,7 +154,8 @@ def save_category_to_csv(category_name, book_links, output_dir="csv_books"):
         "category",
         "review_rating",
         "image_url",
-        "image_path"
+        "image_path",
+        "error",
     ]
     with open(filename, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -127,7 +163,7 @@ def save_category_to_csv(category_name, book_links, output_dir="csv_books"):
         for url in book_links:
             data = get_data_product(url)
             writer.writerow(data)
-    print(f"Catégorie '{category_name}' sauvegardée")
+    print(f"Catégorie '{category_name}' sauvegardée : {filename}")
 
 def main():
     categories = get_category_links()
