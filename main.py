@@ -109,7 +109,7 @@ def get_data_product(book_url):
     product_description = (description_tag.get_text(strip=True) if description_tag else "")
     category = soup.select_one("ul.breadcrumb li:nth-of-type(3)").get_text(strip=True)
     rating_map = {"One": 1, "Two": 2, "Three": 3, "Four": 4, "Five": 5}
-    rating_word = soup.select_one("p.star-rating")["class"][1]
+    rating_word = soup.select_one("p.star-rating")["class"][1]#Sélection de la 2ème classe de p (cette classe représente un nombre de 1 à 5 en toutes lettres)
     review_rating = rating_map.get(rating_word, 0)
     img_src = soup.select_one("div.item.active img")["src"]
     image_url = urljoin(product_page_url, img_src)
@@ -161,6 +161,6 @@ def main():
     for category_name, category_url in categories.items():
         book_links = get_book_links_for_category(category_url)
         save_category_to_csv(category_name, book_links)
-        time.sleep(0.5)
+        time.sleep(0.5)#léger temps de pause entre chaque nouveau fichier enregistré, pour ne pas surcharger le site
 
 main()
